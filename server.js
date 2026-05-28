@@ -9,12 +9,9 @@ const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 
-// Мідлварі для парсингу JSON та роздачі статики (CSS)
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-// Переконайся, що твій style.css лежить у папці public/css/style.css
 
-// Імітація бази даних у пам'яті сервера для статистики
 let dbStats = { wins: 0, losses: 0 };
 
 app.get('/api/stats', (req, res) => {
@@ -28,12 +25,10 @@ app.post('/api/stats/update', (req, res) => {
     res.json({ success: true, stats: dbStats });
 });
 
-// Роздаємо головну сторінку
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// Логіка Socket.io для кімнат
 const rooms = {};
 
 io.on('connection', (socket) => {
@@ -42,7 +37,8 @@ io.on('connection', (socket) => {
     socket.on('joinOnlineRoom', (roomId) => {
         socket.join(roomId);
         if (!rooms[roomId]) {
-            rooms[roomId] = { p1: socket.id, p2: null, readyCount: 0 };
+            // Розширена структура кімнати для збереження стану готовності
+            rooms[roomId] = { p1: socket.id, p2: null, p1Ready: false, p2Ready: false };
             socket.emit('playerAssignment', { playerNum: 1 });
             console.log(`Гравець 1 створив кімнату: ${roomId}`);
         } else if (!rooms[roomId].p2) {
@@ -53,13 +49,32 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Фіксація натискання кнопки готовності гравцями
+    socket.on('playerReady', (data) => {
+        const room = rooms[data.roomId];
+        if (!room) return;
+
+        if (socket.id === room.p1) {
+            room.p1Ready = true;
+        } else if (socket.id === room.p2) {
+            room.p2Ready = true;
+        }
+
+        // Повідомляємо супротивника про готовність
+        socket.to(data.roomId).emit('enemyReadyUpdate', { isReady: true });
+
+        // Якщо обидва гравці натиснули кнопку — запускаємо бій
+        if (room.p1Ready && room.p2Ready) {
+            io.to(data.roomId).emit('battleStarted');
+            console.log(`Обидва гравці готові в кімнаті: ${data.roomId}. Бій розпочато!`);
+        }
+    });
+
     socket.on('makeShot', (data) => {
-        // Пересилаємо постріл супротивнику у кімнаті
         socket.to(data.roomId).emit('enemyShotAttempt', { r: data.r, c: data.c });
     });
 
     socket.on('shareShotResult', (data) => {
-        // Повертаємо результат пострілу автору пострілу
         socket.to(data.roomId).emit('enemyShotResult', {
             r: data.r,
             c: data.c,
@@ -68,9 +83,13 @@ io.on('connection', (socket) => {
         });
     });
 
+    // Передача ходу іншому гравцю у разі вичерпання ліміту часу
+    socket.on('turnTimeout', (data) => {
+        socket.to(data.roomId).emit('enemyTimeout');
+    });
+
     socket.on('disconnect', () => {
         console.log(`Клієнт відключився: ${socket.id}`);
-        // Пошук кімнати, яку треба закрити через дисконект
         for (const roomId in rooms) {
             if (rooms[roomId].p1 === socket.id || rooms[roomId].p2 === socket.id) {
                 socket.to(roomId).emit('enemyDisconnected');
