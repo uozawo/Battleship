@@ -153,6 +153,14 @@ describe('applyShot', () => {
     expect(applyShot(board, ships, 0, 99).result).toBe('invalid');
   });
 
+  it('дробові/нечислові координати → invalid (захист від крешу board[5.5])', () => {
+    const { board, ships } = validateFleet(fixtureFleet());
+    expect(applyShot(board, ships, 5.5, 5).result).toBe('invalid');
+    expect(applyShot(board, ships, 5, 9.9).result).toBe('invalid');
+    expect(applyShot(board, ships, NaN, 0).result).toBe('invalid');
+    expect(applyShot(board, ships, '3', 3).result).toBe('invalid');
+  });
+
   it('перемога коли всі кораблі потоплено', () => {
     const { board, ships } = validateFleet(fixtureFleet());
     let won = false;

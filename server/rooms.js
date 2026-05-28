@@ -106,6 +106,7 @@ export function createRoomManager(io) {
       return socket.emit('game:error', { message: 'Зараз не фаза розстановки' });
     }
     const idx = indexInRoom(room, socket.id);
+    if (idx === -1) return socket.emit('game:error', { message: 'Ви не в цій кімнаті' });
     const player = room.players[idx];
     if (player.ready) return; // вже подав
 
@@ -132,6 +133,7 @@ export function createRoomManager(io) {
       return socket.emit('game:error', { message: 'Зараз не фаза бою' });
     }
     const idx = indexInRoom(room, socket.id);
+    if (idx === -1) return socket.emit('game:error', { message: 'Ви не в цій кімнаті' });
     if (idx !== room.turn) {
       return socket.emit('game:error', { message: 'Зараз не ваш хід' });
     }

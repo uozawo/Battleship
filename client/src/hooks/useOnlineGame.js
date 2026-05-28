@@ -139,6 +139,9 @@ export function useOnlineGame({ token, action, code, onFinished }) {
       socket.removeAllListeners();
       socket.disconnect();
     };
+    // onFinished навмисно не в залежностях: він залежить від token, тож при зміні
+    // token цей ефект і так перепідключиться зі свіжим колбеком. Інакше будь-який
+    // ререндер рвав би сокет. Решта значень — стабільні на час матчу.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, action, code]);
 

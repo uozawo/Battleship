@@ -16,7 +16,10 @@ export const HIT = 'X'; // влучання (корабель ще не пото
 export const MISS = 'M'; // промах
 export const SUNK = 'K'; // частина потопленого корабля
 
-const inBounds = (r, c) => r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE;
+// Цілі числа в межах поля. Перевірка Number.isInteger критична: без неї дробові
+// координати (напр. 5.5) проходять межі, але board[5.5] === undefined → краш.
+const inBounds = (r, c) =>
+  Number.isInteger(r) && Number.isInteger(c) && r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE;
 
 /** Порожня дошка 10×10. */
 export function createEmptyBoard() {
