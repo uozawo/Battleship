@@ -3,7 +3,7 @@
 import { chromium } from 'playwright';
 import { mkdirSync } from 'node:fs';
 
-const BASE = 'http://localhost:3000';
+const BASE = process.env.E2E_BASE || 'http://localhost:3000';
 const SHOTS = new URL('./screenshots/', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 mkdirSync(SHOTS, { recursive: true });
 
