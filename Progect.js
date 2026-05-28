@@ -1,13 +1,21 @@
 const { useState, useEffect, useRef } = React;
 
 const BOARD_SIZE = 10;
-const LETTERS = ["А","Б","В","Г","Д","Е","Є","Ж","З","И"];
+const LETTERS = ["А", "Б", "В", "Г", "Д", "Е", "Є", "Ж", "З", "И"];
 const SHIP_SIZES = [4, 3, 3, 2, 2, 2, 1, 1, 1, 1];
 
 function SeaBattleApp() {
-    // Екрани: 'menu-screen', 'online-screen', 'game-screen'
-    const [currentScreen, setCurrentScreen] = useState('menu-screen');
+    // Екрани: 'auth-screen', 'menu-screen', 'online-screen', 'game-screen', 'leaderboard-screen'
+    const [currentScreen, setCurrentScreen] = useState('auth-screen');
     const [stats, setStats] = useState({ wins: 0, losses: 0, offline: false });
+
+    // --- ТВОЯ ЧАСТИНА: Стани для авторизації та лідерборду ---
+    const [currentUser, setCurrentUser] = useState(null);
+    const [authMode, setAuthMode] = useState('login'); // 'login' або 'register'
+    const [authData, setAuthData] = useState({ username: '', password: '' });
+    const [authMessage, setAuthMessage] = useState('');
+    const [leaderboard, setLeaderboard] = useState([]);
+    // -----------------------------------------------------------
 
     // Ігрові стани
     const [gameMode, setGameMode] = useState('bot'); // 'bot' або 'online'
@@ -25,7 +33,6 @@ function SeaBattleApp() {
     const [currentShipIndex, setCurrentShipIndex] = useState(0);
     const [placementDirection, setPlacementDirection] = useState('H');
 
-    // Нові стани для системи готовності
     const [isReadyPhase, setIsReadyPhase] = useState(false);
     const [isReady, setIsReady] = useState(false);
     const [isEnemyReady, setIsEnemyReady] = useState(false);
@@ -36,34 +43,87 @@ function SeaBattleApp() {
     const [isPlayerTurn, setIsPlayerTurn] = useState(true);
     const [isGameOver, setIsGameOver] = useState(false);
 
-    // Рефи для збереження системних списків без зайвих ререндерів
+    // Рефи
     const playerShipsRef = useRef([]);
     const enemyShipsRef = useRef([]);
     const myNumberRef = useRef(1);
     const currentRoomIdRef = useRef('');
     const socketRef = useRef(null);
     const timerIntervalRef = useRef(null);
-
-    // Стан ШІ (Хантинг)
     const aiStateRef = useRef({ compHunting: false, compHits: [], compNextTargets: [] });
 
-    // Завантаження статистики
-    const updateStatsDisplay = () => {
-        fetch('/api/stats')
-            .then(res => res.json())
-            .then(data => setStats({ wins: data.wins, losses: data.losses, offline: false }))
-            .catch(() => setStats({ wins: 0, losses: 0, offline: true }));
+    // --- ТВОЯ ЧАСТИНА: Функції авторизації та бази даних ---
+    const handleAuthSubmit = async (e) => {
+        e.preventDefault();
+        setAuthMessage('Зачекайте...');
+
+        const endpoint = authMode === 'login' ? '/api/login' : '/api/register';
+
+        try {
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(authData)
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                if (authMode === 'register') {
+                    setAuthMode('login');
+                    setAuthMessage('Реєстрація успішна! Тепер увійдіть.');
+                    setAuthData({ ...authData, password: '' });
+                } else {
+                    setCurrentUser(data.username);
+                    setStats({ wins: data.wins, losses: data.losses, offline: false });
+                    setCurrentScreen('menu-screen');
+                    setAuthMessage('');
+                }
+            } else {
+                setAuthMessage(data.error || 'Помилка');
+            }
+        } catch (error) {
+            setAuthMessage('Помилка з\'єднання з сервером');
+        }
     };
 
-    useEffect(() => {
-        updateStatsDisplay();
-    }, []);
+    const showLeaderboardScreen = async () => {
+        try {
+            const res = await fetch('/api/leaderboard');
+            const data = await res.json();
+            setLeaderboard(data);
+            setCurrentScreen('leaderboard-screen');
+        } catch (error) {
+            alert('Помилка завантаження лідерборду');
+        }
+    };
+
+    const sendGameResultToDB = (outcome) => {
+        setIsGameOver(true);
+        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+        setStatusText(outcome === 'win' ? "Операція успішна (Перемога)" : "Операція провалена (Поразка)");
+
+        if (currentUser) {
+            fetch('/api/stats/update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: currentUser, result: outcome })
+            }).then(() => {
+                setStats(prev => ({
+                    ...prev,
+                    wins: outcome === 'win' ? prev.wins + 1 : prev.wins,
+                    losses: outcome === 'loss' ? prev.losses + 1 : prev.losses
+                }));
+            }).catch(err => console.error(err));
+        }
+
+        if (socketRef.current) socketRef.current.disconnect();
+    };
+    // -----------------------------------------------------------
 
     // Логіка роботи таймера ходу
     useEffect(() => {
         if (!isPlacementPhase && !isReadyPhase && !isGameOver && currentScreen === 'game-screen') {
-            setTurnTimer(30); // Скидання таймера при зміні ходу
-
+            setTurnTimer(30);
             if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
 
             timerIntervalRef.current = setInterval(() => {
@@ -77,16 +137,13 @@ function SeaBattleApp() {
                 });
             }, 1000);
         }
-
         return () => {
             if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
         };
     }, [isPlayerTurn, isPlacementPhase, isReadyPhase, isGameOver, currentScreen]);
 
-    // Обробка закінчення часу на хід
     const handleTimeOut = () => {
         if (isGameOver || isPlacementPhase || isReadyPhase) return;
-
         if (isPlayerTurn) {
             setStatusText("Час вичерпано! Хід переходить до супротивника.");
             setIsPlayerTurn(false);
@@ -124,7 +181,7 @@ function SeaBattleApp() {
                     let coords = [];
                     for (let i = 0; i < size; i++) {
                         let nr = r + (dir === 'V' ? i : 0), nc = c + (dir === 'H' ? i : 0);
-                        boardCopy[nr][nc] = 'S'; coords.push({r: nr, c: nc});
+                        boardCopy[nr][nc] = 'S'; coords.push({ r: nr, c: nc });
                     }
                     fleet.push({ coords, hits: 0, sunk: false }); placed = true;
                 }
@@ -158,9 +215,9 @@ function SeaBattleApp() {
 
     const markSunkVisualAround = (boardCopy, startR, startC) => {
         boardCopy[startR][startC] = 'K';
-        for(let dr=-1; dr<=1; dr++){
-            for(let dc=-1; dc<=1; dc++){
-                let nr = startR+dr, nc = startC+dc;
+        for (let dr = -1; dr <= 1; dr++) {
+            for (let dc = -1; dc <= 1; dc++) {
+                let nr = startR + dr, nc = startC + dc;
                 if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE && boardCopy[nr][nc] === '.') boardCopy[nr][nc] = 'M';
             }
         }
@@ -168,8 +225,8 @@ function SeaBattleApp() {
 
     const countKCells = (board) => {
         let count = 0;
-        for(let r=0; r<BOARD_SIZE; r++)
-            for(let c=0; c<BOARD_SIZE; c++) if(board[r][c] === 'K') count++;
+        for (let r = 0; r < BOARD_SIZE; r++)
+            for (let c = 0; c < BOARD_SIZE; c++) if (board[r][c] === 'K') count++;
         return count;
     };
 
@@ -184,7 +241,6 @@ function SeaBattleApp() {
         setIsReadyPhase(false);
         setIsReady(false);
         setIsEnemyReady(false);
-
         setGameModeTitle("Локальна симуляція (Підготовка флоту)");
         setStatusText("Стратегічне розгортання сил...");
 
@@ -207,7 +263,7 @@ function SeaBattleApp() {
     };
 
     const startOnlineGame = (roomId) => {
-        if(!roomId) return alert("Введіть ідентифікатор лобі!");
+        if (!roomId) return alert("Введіть ідентифікатор лобі!");
         setGameMode('online');
         setIsPlacementPhase(true);
         setCurrentShipIndex(0);
@@ -228,7 +284,6 @@ function SeaBattleApp() {
         enemyShipsRef.current = [];
 
         setCurrentScreen('game-screen');
-
         socketRef.current = io();
 
         socketRef.current.on('playerAssignment', (data) => {
@@ -241,17 +296,15 @@ function SeaBattleApp() {
             setStatusText("Супротивник на місці. Розставте свої кораблі!");
         });
 
-        // Слухаємо оновлення статусів готовності супротивника
         socketRef.current.on('enemyReadyUpdate', (data) => {
             setIsEnemyReady(data.isReady);
-            if(data.isReady) {
+            if (data.isReady) {
                 setStatusText("Супротивник готовий до бою!");
             } else {
                 setStatusText("Очікування готовності супротивника...");
             }
         });
 
-        // Обидва гравці готові — починаємо бій
         socketRef.current.on('battleStarted', () => {
             setIsReadyPhase(false);
             setGameModeTitle("Мережева операція (Бій)");
@@ -259,7 +312,6 @@ function SeaBattleApp() {
             setIsPlayerTurn(myNumberRef.current === 1);
         });
 
-        // Супротивник втратив хід за таймаутом
         socketRef.current.on('enemyTimeout', () => {
             setIsPlayerTurn(true);
             setStatusText("Супротивник вичерпав час! Ваш хід.");
@@ -298,7 +350,7 @@ function SeaBattleApp() {
                 let boardCopy = prev.map(row => [...row]);
                 if (result === 'hit') {
                     boardCopy[r][c] = isSunk ? 'K' : 'X';
-                    if(isSunk) markSunkVisualAround(boardCopy, r, c);
+                    if (isSunk) markSunkVisualAround(boardCopy, r, c);
                     setStatusText(isSunk ? "Ціль знищено!" : "Влучання!");
                     if (countKCells(boardCopy) === 20) sendGameResultToDB('win');
                 } else {
@@ -319,13 +371,11 @@ function SeaBattleApp() {
     };
 
     const exitToMenu = () => {
-        if(timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-        if(socketRef.current) { socketRef.current.disconnect(); socketRef.current = null; }
+        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+        if (socketRef.current) { socketRef.current.disconnect(); socketRef.current = null; }
         setCurrentScreen('menu-screen');
-        updateStatsDisplay();
     };
 
-    // Клік по своєму полю під час розстановки
     const handlePlayerBoardClick = (r, c) => {
         if (!isPlacementPhase) return;
         const size = SHIP_SIZES[currentShipIndex];
@@ -345,9 +395,7 @@ function SeaBattleApp() {
             const nextIndex = currentShipIndex + 1;
             setCurrentShipIndex(nextIndex);
 
-            if (nextIndex >= SHIP_SIZES.length) {
-                goToReadyPhase();
-            }
+            if (nextIndex >= SHIP_SIZES.length) goToReadyPhase();
         } else {
             alert("Недопустима позиція! Кораблі не повинні перетинатися чи торкатися один одного.");
         }
@@ -361,7 +409,6 @@ function SeaBattleApp() {
         goToReadyPhase();
     };
 
-    // Фаза очікування підтвердження готовності обох сторін
     const goToReadyPhase = () => {
         setIsPlacementPhase(false);
         setIsReadyPhase(true);
@@ -372,11 +419,9 @@ function SeaBattleApp() {
         }
     };
 
-    // Натискання кнопки "Готовий до бою"
     const handleReadyClick = () => {
         setIsReady(true);
         if (gameMode === 'bot') {
-            // З ботом гра починається миттєво
             setIsReadyPhase(false);
             setGameModeTitle("Локальна симуляція (Бій)");
             setStatusText("Ваш хід. Стріляйте по ворожому радару.");
@@ -387,7 +432,6 @@ function SeaBattleApp() {
         }
     };
 
-    // Клік по ворожому полю (Атака)
     const handleCellClick = (r, c) => {
         if (isPlacementPhase || isReadyPhase || !isPlayerTurn || isGameOver || enemyBoard[r][c] === 'X' || enemyBoard[r][c] === 'M' || enemyBoard[r][c] === 'K') return;
 
@@ -410,14 +454,12 @@ function SeaBattleApp() {
                     sendGameResultToDB('win');
                 } else {
                     setStatusText(sunk ? "Ціль знищено!" : "Влучання!");
-                    // Оновлюємо таймер на нові 30 секунд для додаткового ходу гравця
                     setTurnTimer(30);
                 }
             }
         }
     };
 
-    // Логіка Робота ШІ
     const robotTurnLogic = (currentEnemyBoard) => {
         if (isGameOver) return;
         let r, c;
@@ -440,17 +482,17 @@ function SeaBattleApp() {
                 setIsPlayerTurn(true);
             } else if (boardCopy[r][c] === 'S') {
                 boardCopy[r][c] = 'X';
-                ai.compHits.push({r, c}); ai.compHunting = true;
+                ai.compHits.push({ r, c }); ai.compHunting = true;
                 let sunk = checkShipSunkInternal(boardCopy, playerShipsRef.current, r, c);
 
                 if (sunk) {
                     ai.compHunting = false; ai.compHits = []; ai.compNextTargets = [];
                 } else {
-                    let dirs = [{r:-1,c:0}, {r:1,c:0}, {r:0,c:-1}, {r:0,c:1}];
+                    let dirs = [{ r: -1, c: 0 }, { r: 1, c: 0 }, { r: 0, c: -1 }, { r: 0, c: 1 }];
                     dirs.forEach(d => {
                         let nr = r + d.r, nc = c + d.c;
                         if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
-                            if (boardCopy[nr][nc] === '.' || boardCopy[nr][nc] === 'S') ai.compNextTargets.push({r: nr, c: nc});
+                            if (boardCopy[nr][nc] === '.' || boardCopy[nr][nc] === 'S') ai.compNextTargets.push({ r: nr, c: nc });
                         }
                     });
                 }
@@ -464,22 +506,8 @@ function SeaBattleApp() {
         });
     };
 
-    const sendGameResultToDB = (outcome) => {
-        setIsGameOver(true);
-        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-        setStatusText(outcome === 'win' ? "Операція успішна (Перемога)" : "Операція провалена (Поразка)");
-
-        fetch('/api/stats/update', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ result: outcome })
-        }).then(() => { if(socketRef.current) socketRef.current.disconnect(); });
-    };
-
-    // Рендеринг сітки ігрового поля
     const renderGrid = (boardData, isEnemy) => {
         let gridClass = isEnemy ? "grid enemy-board" : ("grid player-board" + (isPlacementPhase ? " placing-mode" : ""));
-
         let cells = [];
         cells.push(<div key="corner" className="cell label"></div>);
         for (let i = 0; i < BOARD_SIZE; i++) {
@@ -488,7 +516,6 @@ function SeaBattleApp() {
 
         for (let r = 0; r < BOARD_SIZE; r++) {
             cells.push(<div key={`lbl-v-${r}`} className="cell label">{r + 1}</div>);
-
             for (let c = 0; c < BOARD_SIZE; c++) {
                 let cellClass = "cell game-cell";
                 const val = boardData[r][c];
@@ -498,16 +525,11 @@ function SeaBattleApp() {
                 if (val === 'K') cellClass += ' sunk';
 
                 const clickHandler = () => {
-                    if (isEnemy) {
-                        handleCellClick(r, c);
-                    } else {
-                        handlePlayerBoardClick(r, c);
-                    }
+                    if (isEnemy) handleCellClick(r, c);
+                    else handlePlayerBoardClick(r, c);
                 };
 
-                cells.push(
-                    <div key={`cell-${r}-${c}`} className={cellClass} onClick={clickHandler}></div>
-                );
+                cells.push(<div key={`cell-${r}-${c}`} className={cellClass} onClick={clickHandler}></div>);
             }
         }
         return <div className={gridClass}>{cells}</div>;
@@ -515,6 +537,56 @@ function SeaBattleApp() {
 
     return (
         <main className="app-container">
+            {/* ТВОЯ ЧАСТИНА: ЕКРАН АВТОРИЗАЦІЇ */}
+            <section id="auth-screen" className={`screen ${currentScreen === 'auth-screen' ? 'active' : ''}`}>
+                <header className="menu-header">
+                    <h1>МОРСЬКИЙ БІЙ</h1>
+                    <p className="subtitle">Авторизація пілота</p>
+                </header>
+                <div className="menu-card" style={{ maxWidth: '400px', margin: '0 auto' }}>
+                    <h2 style={{ textAlign: 'center', marginBottom: '20px' }}>
+                        {authMode === 'login' ? 'Вхід у систему' : 'Реєстрація'}
+                    </h2>
+
+                    <form onSubmit={handleAuthSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                        <input
+                            type="text"
+                            placeholder="Ім'я гравця (Логін)"
+                            value={authData.username}
+                            onChange={(e) => setAuthData({ ...authData, username: e.target.value })}
+                            required
+                            style={{ padding: '10px', borderRadius: '5px', border: '1px solid #ccc' }}
+                        />
+                        <input
+                            type="password"
+                            placeholder="Пароль"
+                            value={authData.password}
+                            onChange={(e) => setAuthData({ ...authData, password: e.target.value })}
+                            required
+                            style={{ padding: '10px', borderRadius: '5px', border: '1px solid #ccc' }}
+                        />
+                        <button type="submit" className="btn btn-primary">
+                            {authMode === 'login' ? 'Увійти' : 'Створити акаунт'}
+                        </button>
+                    </form>
+
+                    {authMessage && (
+                        <p style={{ textAlign: 'center', marginTop: '15px', color: authMessage.includes('Помилка') ? 'red' : 'green' }}>
+                            {authMessage}
+                        </p>
+                    )}
+
+                    <div style={{ textAlign: 'center', marginTop: '20px' }}>
+                        <button className="btn btn-link" onClick={() => {
+                            setAuthMode(authMode === 'login' ? 'register' : 'login');
+                            setAuthMessage('');
+                        }}>
+                            {authMode === 'login' ? 'Ще немає акаунту? Зареєструватися' : 'Вже є акаунт? Увійти'}
+                        </button>
+                    </div>
+                </div>
+            </section>
+
             {/* МЕНЮ ЕКРАН */}
             <section id="menu-screen" className={`screen ${currentScreen === 'menu-screen' ? 'active' : ''}`}>
                 <header className="menu-header">
@@ -522,16 +594,60 @@ function SeaBattleApp() {
                     <p className="subtitle">Тактичний мережевий симулятор</p>
                 </header>
                 <div className="menu-card">
+                    {/* Привітання користувача */}
+                    <div style={{ textAlign: 'center', marginBottom: '20px', fontSize: '1.2rem', color: '#0056b3' }}>
+                        <strong>Пілот: {currentUser}</strong>
+                    </div>
+
                     <div className="action-group">
                         <button className="btn btn-primary" onClick={startBotGame}>Грати проти ШІ</button>
                         <button className="btn btn-outline" onClick={showOnlineSetup}>Мережева гра</button>
+                        {/* Кнопка лідерборду */}
+                        <button className="btn btn-outline" style={{ background: '#ffc107', color: '#000', borderColor: '#ffc107' }} onClick={showLeaderboardScreen}>Таблиця лідерів 🏆</button>
                     </div>
                     <footer className="stats-panel">
-                        <span className="stats-label">Синхронізація з БД:</span>
+                        <span className="stats-label">Ваша статистика:</span>
                         <span id="stats-display" className="stats-value">
-              {stats.offline ? "Офлайн режим (сервер не підключено)" : `Перемог: ${stats.wins} | Програшів: ${stats.losses}`}
-            </span>
+                            Перемог: {stats.wins} | Програшів: {stats.losses}
+                        </span>
                     </footer>
+                </div>
+            </section>
+
+            {/* ТВОЯ ЧАСТИНА: ЕКРАН ЛІДЕРБОРДУ */}
+            <section id="leaderboard-screen" className={`screen ${currentScreen === 'leaderboard-screen' ? 'active' : ''}`}>
+                <header className="menu-header">
+                    <h2>ТОП-10 ПІЛОТІВ 🏆</h2>
+                </header>
+                <div className="menu-card" style={{ maxWidth: '600px', margin: '0 auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'center', marginBottom: '20px' }}>
+                        <thead>
+                            <tr style={{ borderBottom: '2px solid #ccc', background: '#f8f9fa' }}>
+                                <th style={{ padding: '10px' }}>#</th>
+                                <th style={{ padding: '10px' }}>Ім'я гравця</th>
+                                <th style={{ padding: '10px' }}>Перемоги</th>
+                                <th style={{ padding: '10px' }}>Поразки</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {leaderboard.map((player, index) => (
+                                <tr key={index} style={{ borderBottom: '1px solid #eee' }}>
+                                    <td style={{ padding: '10px' }}>{index + 1}</td>
+                                    <td style={{ padding: '10px', fontWeight: 'bold' }}>{player.username}</td>
+                                    <td style={{ padding: '10px', color: 'green' }}>{player.wins}</td>
+                                    <td style={{ padding: '10px', color: 'red' }}>{player.losses}</td>
+                                </tr>
+                            ))}
+                            {leaderboard.length === 0 && (
+                                <tr>
+                                    <td colSpan="4" style={{ padding: '20px' }}>Немає даних для відображення</td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                    <div style={{ textAlign: 'center' }}>
+                        <button className="btn btn-primary" onClick={() => setCurrentScreen('menu-screen')}>Повернутися в меню</button>
+                    </div>
                 </div>
             </section>
 
@@ -561,8 +677,6 @@ function SeaBattleApp() {
                 <header className="game-header">
                     <h2>{gameModeTitle}</h2>
                     <div className="status-badge">{statusText}</div>
-
-                    {/* Візуальний таймер ходу */}
                     {!isPlacementPhase && !isReadyPhase && !isGameOver && (
                         <div className={`timer-badge ${turnTimer <= 10 ? 'urgent' : ''}`}>
                             Залишилось часу: {turnTimer} сек
@@ -583,7 +697,6 @@ function SeaBattleApp() {
                     </div>
                 )}
 
-                {/* Блок підтвердження готовності */}
                 {isReadyPhase && (
                     <div className="ready-box">
                         <p>Всі кораблі успішно розміщено на позиціях.</p>
@@ -604,7 +717,6 @@ function SeaBattleApp() {
                         <span className="board-title">Ваш флот</span>
                         {renderGrid(playerBoard, false)}
                     </div>
-
                     <div className="board-wrapper" style={{ display: (!isPlacementPhase && !isReadyPhase) ? 'block' : 'none' }}>
                         <span className="board-title">Радар супротивника</span>
                         {renderGrid(enemyBoard, true)}
