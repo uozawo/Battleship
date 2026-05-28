@@ -20,6 +20,7 @@
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
+    "playwright": "^1.60.0",
     "vitest": "^3.0.5"
   },
   "license": "MIT"
