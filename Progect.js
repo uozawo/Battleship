@@ -20,10 +20,18 @@ function SeaBattleApp() {
     const [playerBoard, setPlayerBoard] = useState(Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill('.')));
     const [enemyBoard, setEnemyBoard] = useState(Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill('.')));
 
-    // Фаза розстановки
+    // Фаза розстановки та готовності
     const [isPlacementPhase, setIsPlacementPhase] = useState(false);
     const [currentShipIndex, setCurrentShipIndex] = useState(0);
     const [placementDirection, setPlacementDirection] = useState('H');
+
+    // Нові стани для системи готовності
+    const [isReadyPhase, setIsReadyPhase] = useState(false);
+    const [isReady, setIsReady] = useState(false);
+    const [isEnemyReady, setIsEnemyReady] = useState(false);
+
+    // Таймер ходу
+    const [turnTimer, setTurnTimer] = useState(30);
 
     const [isPlayerTurn, setIsPlayerTurn] = useState(true);
     const [isGameOver, setIsGameOver] = useState(false);
@@ -34,6 +42,7 @@ function SeaBattleApp() {
     const myNumberRef = useRef(1);
     const currentRoomIdRef = useRef('');
     const socketRef = useRef(null);
+    const timerIntervalRef = useRef(null);
 
     // Стан ШІ (Хантинг)
     const aiStateRef = useRef({ compHunting: false, compHits: [], compNextTargets: [] });
@@ -50,7 +59,46 @@ function SeaBattleApp() {
         updateStatsDisplay();
     }, []);
 
-    // Хелпери перевірок та генерації (копія твоєї логіки)
+    // Логіка роботи таймера ходу
+    useEffect(() => {
+        if (!isPlacementPhase && !isReadyPhase && !isGameOver && currentScreen === 'game-screen') {
+            setTurnTimer(30); // Скидання таймера при зміні ходу
+
+            if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+
+            timerIntervalRef.current = setInterval(() => {
+                setTurnTimer(prev => {
+                    if (prev <= 1) {
+                        clearInterval(timerIntervalRef.current);
+                        handleTimeOut();
+                        return 0;
+                    }
+                    return prev - 1;
+                });
+            }, 1000);
+        }
+
+        return () => {
+            if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+        };
+    }, [isPlayerTurn, isPlacementPhase, isReadyPhase, isGameOver, currentScreen]);
+
+    // Обробка закінчення часу на хід
+    const handleTimeOut = () => {
+        if (isGameOver || isPlacementPhase || isReadyPhase) return;
+
+        if (isPlayerTurn) {
+            setStatusText("Час вичерпано! Хід переходить до супротивника.");
+            setIsPlayerTurn(false);
+            if (gameMode === 'online') {
+                socketRef.current.emit('turnTimeout', { roomId: currentRoomIdRef.current });
+            } else {
+                setTimeout(() => robotTurnLogic(enemyBoard), 600);
+            }
+        }
+    };
+
+    // Хелпери перевірок та генерації
     const isValidPosition = (board, r, c, size, dir) => {
         for (let i = 0; i < size; i++) {
             let nr = r + (dir === 'V' ? i : 0), nc = c + (dir === 'H' ? i : 0);
@@ -133,6 +181,9 @@ function SeaBattleApp() {
         setPlacementDirection('H');
         setCurrentShipIndex(0);
         setIsGameOver(false);
+        setIsReadyPhase(false);
+        setIsReady(false);
+        setIsEnemyReady(false);
 
         setGameModeTitle("Локальна симуляція (Підготовка флоту)");
         setStatusText("Стратегічне розгортання сил...");
@@ -161,6 +212,9 @@ function SeaBattleApp() {
         setIsPlacementPhase(true);
         setCurrentShipIndex(0);
         setIsGameOver(false);
+        setIsReadyPhase(false);
+        setIsReady(false);
+        setIsEnemyReady(false);
         currentRoomIdRef.current = roomId;
 
         setGameModeTitle("Мережева гра (Підготовка флоту)");
@@ -185,6 +239,30 @@ function SeaBattleApp() {
 
         socketRef.current.on('gameStarted', () => {
             setStatusText("Супротивник на місці. Розставте свої кораблі!");
+        });
+
+        // Слухаємо оновлення статусів готовності супротивника
+        socketRef.current.on('enemyReadyUpdate', (data) => {
+            setIsEnemyReady(data.isReady);
+            if(data.isReady) {
+                setStatusText("Супротивник готовий до бою!");
+            } else {
+                setStatusText("Очікування готовності супротивника...");
+            }
+        });
+
+        // Обидва гравці готові — починаємо бій
+        socketRef.current.on('battleStarted', () => {
+            setIsReadyPhase(false);
+            setGameModeTitle("Мережева операція (Бій)");
+            setStatusText(myNumberRef.current === 1 ? "Ваш хід" : "Хід супротивника");
+            setIsPlayerTurn(myNumberRef.current === 1);
+        });
+
+        // Супротивник втратив хід за таймаутом
+        socketRef.current.on('enemyTimeout', () => {
+            setIsPlayerTurn(true);
+            setStatusText("Супротивник вичерпав час! Ваш хід.");
         });
 
         socketRef.current.on('enemyShotAttempt', ({ r, c }) => {
@@ -241,6 +319,7 @@ function SeaBattleApp() {
     };
 
     const exitToMenu = () => {
+        if(timerIntervalRef.current) clearInterval(timerIntervalRef.current);
         if(socketRef.current) { socketRef.current.disconnect(); socketRef.current = null; }
         setCurrentScreen('menu-screen');
         updateStatsDisplay();
@@ -267,7 +346,7 @@ function SeaBattleApp() {
             setCurrentShipIndex(nextIndex);
 
             if (nextIndex >= SHIP_SIZES.length) {
-                endPlacementPhaseAndStartBattle();
+                goToReadyPhase();
             }
         } else {
             alert("Недопустима позиція! Кораблі не повинні перетинатися чи торкатися один одного.");
@@ -279,23 +358,38 @@ function SeaBattleApp() {
         const boardCopy = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill('.'));
         playerShipsRef.current = generateFleetRandomly(boardCopy);
         setPlayerBoard(boardCopy);
-        endPlacementPhaseAndStartBattle();
+        goToReadyPhase();
     };
 
-    const endPlacementPhaseAndStartBattle = () => {
+    // Фаза очікування підтвердження готовності обох сторін
+    const goToReadyPhase = () => {
         setIsPlacementPhase(false);
+        setIsReadyPhase(true);
         if (gameMode === 'bot') {
+            setStatusText("Флот розгорнуто. Підтвердіть готовність до початку симуляції.");
+        } else {
+            setStatusText("Флот розгорнуто. Натисніть кнопку готовності.");
+        }
+    };
+
+    // Натискання кнопки "Готовий до бою"
+    const handleReadyClick = () => {
+        setIsReady(true);
+        if (gameMode === 'bot') {
+            // З ботом гра починається миттєво
+            setIsReadyPhase(false);
             setGameModeTitle("Локальна симуляція (Бій)");
             setStatusText("Ваш хід. Стріляйте по ворожому радару.");
+            setIsPlayerTurn(true);
         } else {
-            setGameModeTitle("Мережева операція (Бій)");
-            setStatusText(isPlayerTurn ? "Ваш хід" : "Хід супротивника");
+            setStatusText("Очікування готовності супротивника...");
+            socketRef.current.emit('playerReady', { roomId: currentRoomIdRef.current, isReady: true });
         }
     };
 
     // Клік по ворожому полю (Атака)
     const handleCellClick = (r, c) => {
-        if (isPlacementPhase || !isPlayerTurn || isGameOver || enemyBoard[r][c] === 'X' || enemyBoard[r][c] === 'M' || enemyBoard[r][c] === 'K') return;
+        if (isPlacementPhase || isReadyPhase || !isPlayerTurn || isGameOver || enemyBoard[r][c] === 'X' || enemyBoard[r][c] === 'M' || enemyBoard[r][c] === 'K') return;
 
         if (gameMode === 'online') {
             setIsPlayerTurn(false);
@@ -316,6 +410,8 @@ function SeaBattleApp() {
                     sendGameResultToDB('win');
                 } else {
                     setStatusText(sunk ? "Ціль знищено!" : "Влучання!");
+                    // Оновлюємо таймер на нові 30 секунд для додаткового ходу гравця
+                    setTurnTimer(30);
                 }
             }
         }
@@ -370,6 +466,7 @@ function SeaBattleApp() {
 
     const sendGameResultToDB = (outcome) => {
         setIsGameOver(true);
+        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
         setStatusText(outcome === 'win' ? "Операція успішна (Перемога)" : "Операція провалена (Поразка)");
 
         fetch('/api/stats/update', {
@@ -384,15 +481,12 @@ function SeaBattleApp() {
         let gridClass = isEnemy ? "grid enemy-board" : ("grid player-board" + (isPlacementPhase ? " placing-mode" : ""));
 
         let cells = [];
-        // Кутова клітинка
         cells.push(<div key="corner" className="cell label"></div>);
-        // Букви (А-И)
         for (let i = 0; i < BOARD_SIZE; i++) {
             cells.push(<div key={`lbl-h-${i}`} className="cell label">{LETTERS[i]}</div>);
         }
 
         for (let r = 0; r < BOARD_SIZE; r++) {
-            // Цифри рядків (1-10)
             cells.push(<div key={`lbl-v-${r}`} className="cell label">{r + 1}</div>);
 
             for (let c = 0; c < BOARD_SIZE; c++) {
@@ -421,11 +515,11 @@ function SeaBattleApp() {
 
     return (
         <main className="app-container">
-            {/* МЕНЮ ЭКРАН */}
+            {/* МЕНЮ ЕКРАН */}
             <section id="menu-screen" className={`screen ${currentScreen === 'menu-screen' ? 'active' : ''}`}>
                 <header className="menu-header">
                     <h1>МОРСЬКИЙ БІЙ</h1>
-                    <p class="subtitle">Тактичний мережевий симулятор</p>
+                    <p className="subtitle">Тактичний мережевий симулятор</p>
                 </header>
                 <div className="menu-card">
                     <div className="action-group">
@@ -467,6 +561,13 @@ function SeaBattleApp() {
                 <header className="game-header">
                     <h2>{gameModeTitle}</h2>
                     <div className="status-badge">{statusText}</div>
+
+                    {/* Візуальний таймер ходу */}
+                    {!isPlacementPhase && !isReadyPhase && !isGameOver && (
+                        <div className={`timer-badge ${turnTimer <= 10 ? 'urgent' : ''}`}>
+                            Залишилось часу: {turnTimer} сек
+                        </div>
+                    )}
                 </header>
 
                 {isPlacementPhase && (
@@ -482,13 +583,29 @@ function SeaBattleApp() {
                     </div>
                 )}
 
+                {/* Блок підтвердження готовності */}
+                {isReadyPhase && (
+                    <div className="ready-box">
+                        <p>Всі кораблі успішно розміщено на позиціях.</p>
+                        <button className="btn btn-ready" disabled={isReady} onClick={handleReadyClick}>
+                            {isReady ? "Очікування готовності..." : "Готовий до бою"}
+                        </button>
+                        {gameMode === 'online' && (
+                            <div className="ready-indicators">
+                                <span className={`indicator ${isReady ? 'ready' : ''}`}>Ви: {isReady ? 'Готовий' : 'Ні'}</span>
+                                <span className={`indicator ${isEnemyReady ? 'ready' : ''}`}>Ворог: {isEnemyReady ? 'Готовий' : 'Ні'}</span>
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 <div className="battlefield">
                     <div className="board-wrapper">
                         <span className="board-title">Ваш флот</span>
                         {renderGrid(playerBoard, false)}
                     </div>
 
-                    <div className="board-wrapper" style={{ display: !isPlacementPhase ? 'block' : 'none' }}>
+                    <div className="board-wrapper" style={{ display: (!isPlacementPhase && !isReadyPhase) ? 'block' : 'none' }}>
                         <span className="board-title">Радар супротивника</span>
                         {renderGrid(enemyBoard, true)}
                     </div>
@@ -502,6 +619,5 @@ function SeaBattleApp() {
     );
 }
 
-// Рендеримо додаток у root елемент
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<SeaBattleApp />);
