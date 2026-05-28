@@ -377,3 +377,84 @@ input[type="text"]:focus {
     from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
 }
+/* Додайте ці стилі в кінець вашого файлу style.css */
+
+/* Стилі плашки таймера */
+.timer-badge {
+    display: inline-block;
+    padding: 6px 14px;
+    background-color: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #eab308;
+    margin-top: 10px;
+    transition: var(--transition);
+}
+
+.timer-badge.urgent {
+    color: var(--danger);
+    border-color: var(--danger);
+    animation: pulse 1s infinite alternate;
+}
+
+/* Контейнер вибору готовності */
+.ready-box {
+    background-color: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 25px;
+    text-align: center;
+}
+
+.ready-box p {
+    font-size: 1rem;
+    margin-bottom: 14px;
+    font-weight: 500;
+}
+
+.btn-ready {
+    background-color: var(--success);
+    color: #fff;
+    max-width: 260px;
+    margin: 0 auto;
+}
+
+.btn-ready:hover:not(:disabled) {
+    background-color: #047857;
+}
+
+.btn-ready:disabled {
+    background-color: var(--bg-input);
+    color: var(--text-muted);
+    border: 1px solid var(--border-color);
+    cursor: not-allowed;
+}
+
+.ready-indicators {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    margin-top: 12px;
+    font-size: 0.85rem;
+}
+
+.indicator {
+    padding: 4px 10px;
+    background-color: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-muted);
+}
+
+.indicator.ready {
+    color: var(--success);
+    border-color: rgba(16, 185, 129, 0.3);
+}
+
+@keyframes pulse {
+    from { box-shadow: 0 0 4px rgba(239, 68, 68, 0.2); }
+    to { box-shadow: 0 0 12px rgba(239, 68, 68, 0.5); }
+}
