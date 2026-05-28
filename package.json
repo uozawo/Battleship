@@ -1,0 +1,26 @@
+{
+  "name": "battleship",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Морський бій — модернізований full-stack (React+Vite / Socket.io / Express / node:sqlite)",
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c blue,magenta \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "npm run dev --workspace @battleship/server",
+    "dev:client": "npm run dev --workspace @battleship/client",
+    "build": "npm run build --workspace @battleship/client",
+    "start": "npm run start --workspace @battleship/server",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "vitest": "^3.0.5"
+  },
+  "license": "MIT"
+}
