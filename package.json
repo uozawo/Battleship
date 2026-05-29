@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Морський бій — модернізований full-stack (React+Vite / Socket.io / Express / node:sqlite)",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "workspaces": [
     "shared",
     "server",

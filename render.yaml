@@ -1,0 +1,24 @@
+# Render Blueprint — розгортає весь застосунок одним web-сервісом.
+# Node-сервер (Express + Socket.io) сам роздає зібраний React-клієнт із client/dist,
+# тож фронтенд і бекенд живуть на одному origin (без CORS).
+#
+# Деплой: render.com → New → Blueprint → під'єднати репозиторій uozawo/Battleship (гілка main).
+# Render прочитає цей файл, збере проєкт і згенерує JWT_SECRET автоматично.
+# Докладніше — див. README, розділ «☁️ Деплой на Render».
+services:
+  - type: web
+    name: battleship
+    runtime: node
+    plan: free
+    region: frankfurt          # найближчий до України регіон Render
+    branch: main
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION       # node:sqlite потребує Node 24
+        value: "24"
+      - key: JWT_SECRET         # Render згенерує надійний випадковий секрет
+        generateValue: true
+      - key: PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD  # не тягнути браузери Playwright під час збірки
+        value: "1"
